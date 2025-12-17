@@ -11,6 +11,7 @@ Outil automatique de détection et capture de flux vidéo dans les navigateurs w
 - ✅ **Analyse HTML**: Détecte les balises `<video>` et `<source>`
 - ✅ **Logs détaillés**: Enregistrement complet des opérations
 - ✅ **Export**: Sauvegarde des URLs détectées
+- ✅ **Scraping récursif**: Suit les liens automatiquement pour scraper plusieurs pages
 
 ## 📋 Prérequis
 
@@ -39,10 +40,14 @@ python video_scraper.py
 Suivez les instructions à l'écran:
 1. Choisissez le navigateur (Chrome, Firefox ou Edge)
 2. Mode avec ou sans interface graphique
-3. Entrez l'URL de la page contenant la vidéo
-4. Définissez le temps d'attente pour le chargement
+3. **Choisissez le mode de scraping**:
+   - **Mode simple**: Scrape une seule page
+   - **Mode récursif**: Suit les liens et scrape plusieurs pages
+4. Entrez l'URL de la page contenant la vidéo
+5. Définissez le temps d'attente pour le chargement
+6. (Pour le mode récursif) Définissez la profondeur maximale et le délai entre les requêtes
 
-### Mode programmation
+### Mode programmation - Scraping simple
 
 ```python
 from video_scraper import VideoScraper
@@ -56,6 +61,25 @@ with VideoScraper(browser='chrome', headless=False) as scraper:
         print(f"Flux vidéo trouvé: {url}")
 ```
 
+### Mode programmation - Scraping récursif
+
+```python
+from video_scraper import VideoScraper
+
+# Scrape récursivement plusieurs pages en suivant les liens
+with VideoScraper(browser='chrome', headless=True) as scraper:
+    video_urls = scraper.scrape_recursive(
+        start_url='https://example.com',
+        max_depth=2,                          # Profondeur maximale (0 = page actuelle, 1 = page + liens, etc.)
+        wait_time=10,                         # Temps d'attente par page
+        delay_between_requests=2,             # Délai entre les requêtes en secondes
+        allowed_domains=['example.com']       # Domaines autorisés (None = domaine de départ uniquement)
+    )
+    
+    scraper.save_results('toutes_les_videos.txt')
+    print(f"Total: {len(video_urls)} flux vidéo détectés")
+```
+
 ### Exemple avec configuration avancée
 
 ```python
@@ -66,19 +90,18 @@ scraper = VideoScraper(browser='chrome', headless=True)
 scraper.start()
 
 try:
-    # Scrape plusieurs pages
-    pages = [
-        'https://example.com/video1',
-        'https://example.com/video2'
-    ]
+    # Scraping récursif avec options personnalisées
+    print("Démarrage du scraping récursif...")
+    urls = scraper.scrape_recursive(
+        start_url='https://example.com/videos',
+        max_depth=3,                                    # Explore jusqu'à 3 niveaux de profondeur
+        wait_time=15,                                   # Attendre 15 secondes par page
+        allowed_domains=['example.com', 'videos.example.com'],  # Plusieurs domaines autorisés
+        delay_between_requests=3                        # 3 secondes entre les requêtes
+    )
     
-    for page in pages:
-        print(f"\nScraping: {page}")
-        urls = scraper.scrape_page(page, wait_time=15)
-        print(f"Trouvé: {len(urls)} flux vidéo")
-    
-    # Sauvegarde tous les résultats
-    scraper.save_results('all_videos.txt')
+    print(f"✓ {len(urls)} flux vidéo détectés")
+    scraper.save_results('resultats_complets.txt')
     
 finally:
     scraper.close()
@@ -100,15 +123,6 @@ Le scraper détecte automatiquement:
 
 ## 🔧 Options avancées
 
-### Paramètres de VideoScraper
-
-```python
-VideoScraper(
-    browser='chrome',    # 'chrome', 'firefox', 'edge'
-    headless=False       # True pour mode sans interface
-)
-```
-
 ### Méthode scrape_page
 
 ```python
@@ -117,6 +131,27 @@ scraper.scrape_page(
     wait_time=10                # Temps d'attente en secondes
 )
 ```
+
+### Méthode scrape_recursive
+
+```python
+scraper.scrape_recursive(
+    start_url='https://example.com',     # URL de départ
+    max_depth=2,                         # Profondeur maximale (0 = page actuelle)
+    wait_time=10,                        # Temps d'attente par page (secondes)
+    allowed_domains=None,                # Domaines autorisés (None = tous les domaines)
+    delay_between_requests=2             # Délai entre les requêtes (secondes)
+)
+```
+
+**Paramètres de scrape_recursive:**
+- `max_depth`: 
+  - `0` = Scrape uniquement la page de départ
+  - `1` = Scrape la page de départ + les pages liées
+  - `2` = Scrape la page de départ + les pages liées + les pages liées des pages liées
+  - etc.
+- `allowed_domains`: Limite le scraping à certains domaines (pour éviter de crawler le web entier)
+- `delay_between_requests`: Respecte les serveurs en ajoutant un délai entre les requêtes
 
 ## 📝 Télécharger les vidéos détectées
 

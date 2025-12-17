@@ -7,6 +7,7 @@ import json
 import time
 import logging
 from typing import List, Dict, Set
+from urllib.parse import urljoin, urlparse
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.firefox.service import Service as FirefoxService
@@ -58,6 +59,8 @@ class VideoScraper:
         self.driver = None
         self.video_urls: Set[str] = set()
         self.ua = UserAgent()
+        self.visited_urls: Set[str] = set()
+        self.found_links: Set[str] = set()
         
     def _setup_chrome(self) -> webdriver.Chrome:
         """Configure Chrome avec interception réseau"""
@@ -219,6 +222,48 @@ class VideoScraper:
         except Exception as e:
             logger.error(f"Erreur lors de l'extraction des éléments vidéo: {e}")
     
+    def _extract_links(self, base_url: str, allowed_domains: List[str] = None) -> Set[str]:
+        """
+        Extrait tous les liens d'une page
+        
+        Args:
+            base_url: URL de base pour résoudre les liens relatifs
+            allowed_domains: Liste des domaines autorisés (None = tous les domaines)
+            
+        Returns:
+            Ensemble des URLs trouvées
+        """
+        links = set()
+        try:
+            # Extrait tous les liens
+            link_elements = self.driver.find_elements(By.TAG_NAME, 'a')
+            
+            for link in link_elements:
+                href = link.get_attribute('href')
+                
+                if not href or href.startswith('#') or href.startswith('javascript:'):
+                    continue
+                
+                # Convertit les liens relatifs en liens absolus
+                absolute_url = urljoin(base_url, href)
+                
+                # Vérifie les domaines autorisés
+                if allowed_domains:
+                    parsed_url = urlparse(absolute_url)
+                    domain = parsed_url.netloc
+                    
+                    if not any(allowed_domain in domain for allowed_domain in allowed_domains):
+                        continue
+                
+                links.add(absolute_url)
+            
+            logger.info(f"✓ {len(links)} lien(s) trouvé(s) sur la page")
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de l'extraction des liens: {e}")
+        
+        return links
+    
     def scrape_page(self, url: str, wait_time: int = 10) -> List[str]:
         """
         Scrape une page pour détecter les flux vidéo
@@ -273,6 +318,112 @@ class VideoScraper:
         except Exception as e:
             logger.error(f"Erreur lors du scraping: {e}")
             return []
+    
+    def scrape_recursive(self, start_url: str, max_depth: int = 2, wait_time: int = 10, 
+                         allowed_domains: List[str] = None, delay_between_requests: int = 2) -> List[str]:
+        """
+        Scrape récursivement plusieurs pages pour détecter les flux vidéo
+        
+        Args:
+            start_url: URL de départ
+            max_depth: Profondeur maximale de récursion (0 = page actuelle uniquement)
+            wait_time: Temps d'attente pour le chargement de chaque page (secondes)
+            allowed_domains: Liste des domaines autorisés (None = tous les domaines)
+            delay_between_requests: Délai entre les requêtes (secondes)
+            
+        Returns:
+            Liste des URLs de flux vidéo détectées
+        """
+        if not self.driver:
+            self.start()
+        
+        self.video_urls.clear()
+        self.visited_urls.clear()
+        self.found_links.clear()
+        
+        logger.info(f"{'='*60}")
+        logger.info(f"SCRAPING RÉCURSIF")
+        logger.info(f"{'='*60}")
+        logger.info(f"URL de départ: {start_url}")
+        logger.info(f"Profondeur maximale: {max_depth}")
+        logger.info(f"{'='*60}\n")
+        
+        # Définir les domaines autorisés par défaut
+        if allowed_domains is None and start_url:
+            domain = urlparse(start_url).netloc
+            allowed_domains = [domain]
+        
+        def _scrape_recursive_helper(url: str, current_depth: int):
+            """Fonction helper récursive"""
+            
+            # Arrête si déjà visitée
+            if url in self.visited_urls:
+                return
+            
+            # Arrête si profondeur dépassée
+            if current_depth > max_depth:
+                return
+            
+            self.visited_urls.add(url)
+            
+            logger.info(f"\n[Profondeur {current_depth}] Scraping: {url}")
+            
+            try:
+                # Charge la page
+                self.driver.get(url)
+                
+                # Attend le chargement
+                logger.info(f"Attente de {wait_time} secondes...")
+                time.sleep(wait_time)
+                
+                # Scroll pour déclencher le chargement lazy
+                self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(1)
+                self.driver.execute_script("window.scrollTo(0, 0);")
+                time.sleep(1)
+                
+                # Extrait les URLs vidéo
+                logger.info("Analyse des flux réseau...")
+                self._extract_network_logs()
+                
+                logger.info("Analyse des éléments HTML...")
+                self._extract_video_elements()
+                
+                # Extrait les liens (seulement si pas au max de profondeur)
+                if current_depth < max_depth:
+                    logger.info("Extraction des liens pour récursion...")
+                    new_links = self._extract_links(url, allowed_domains)
+                    
+                    # Scrape récursivement les nouveaux liens
+                    for link in new_links:
+                        if link not in self.visited_urls:
+                            logger.info(f"Prochain lien à traiter: {link}")
+                            time.sleep(delay_between_requests)
+                            _scrape_recursive_helper(link, current_depth + 1)
+            
+            except Exception as e:
+                logger.error(f"Erreur lors du scraping récursif de {url}: {e}")
+        
+        # Lance le scraping récursif
+        _scrape_recursive_helper(start_url, 0)
+        
+        # Résultats
+        logger.info(f"\n{'='*60}")
+        logger.info(f"RÉSULTATS FINAUX")
+        logger.info(f"{'='*60}")
+        logger.info(f"Pages visitées: {len(self.visited_urls)}")
+        logger.info(f"Flux vidéo détectés: {len(self.video_urls)}")
+        
+        if self.video_urls:
+            logger.info(f"\nListe des flux vidéo:")
+            for i, video_url in enumerate(self.video_urls, 1):
+                logger.info(f"{i}. {video_url}")
+        else:
+            logger.warning("Aucun flux vidéo détecté")
+        
+        logger.info(f"{'='*60}\n")
+        
+        return list(self.video_urls)
     
     def save_results(self, filename: str = 'video_urls.txt'):
         """
@@ -334,6 +485,12 @@ def main():
     headless_choice = input("\nMode sans interface graphique? (o/n): ").strip().lower()
     headless = headless_choice == 'o'
     
+    # Mode de scraping
+    print("\nMode de scraping:")
+    print("1. Simple (une seule page)")
+    print("2. Récursif (suivre les liens)")
+    scrape_mode = input("\nVotre choix (1-2): ").strip()
+    
     # URL à scraper
     url = input("\nEntrez l'URL de la page contenant la vidéo: ").strip()
     if not url.startswith('http'):
@@ -345,6 +502,21 @@ def main():
     except ValueError:
         wait_time = 10
     
+    # Paramètres pour le mode récursif
+    max_depth = 2
+    delay_between_requests = 2
+    
+    if scrape_mode == '2':
+        try:
+            max_depth = int(input("\nProfondeur maximale (défaut=2): ").strip() or "2")
+        except ValueError:
+            max_depth = 2
+        
+        try:
+            delay_between_requests = int(input("Délai entre les requêtes en secondes (défaut=2): ").strip() or "2")
+        except ValueError:
+            delay_between_requests = 2
+    
     print("\n" + "="*60)
     print("Démarrage du scraping...")
     print("="*60 + "\n")
@@ -352,7 +524,17 @@ def main():
     # Exécute le scraping
     try:
         with VideoScraper(browser=browser, headless=headless) as scraper:
-            video_urls = scraper.scrape_page(url, wait_time)
+            if scrape_mode == '2':
+                # Mode récursif
+                video_urls = scraper.scrape_recursive(
+                    url, 
+                    max_depth=max_depth,
+                    wait_time=wait_time,
+                    delay_between_requests=delay_between_requests
+                )
+            else:
+                # Mode simple
+                video_urls = scraper.scrape_page(url, wait_time)
             
             if video_urls:
                 # Sauvegarde les résultats

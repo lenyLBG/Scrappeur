@@ -1,0 +1,12 @@
+# Requirements for Scrappeur
+# Core Python packages used by video_scraper.py
+selenium
+webdriver-manager
+requests
+fake-useragent
+
+# Optional useful Python tools (not required for the scraper itself):
+yt-dlp
+streamlink
+
+# Note: ffmpeg is a system binary and must be installed separately (e.g., apt, choco, or from https://ffmpeg.org/).
